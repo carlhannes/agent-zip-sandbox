@@ -20,7 +20,9 @@ function makeVfs(workspace) {
     readFile: (p, enc = null) => workspace.readFile(p, enc),
     writeFile: (p, data, enc = "utf8") => workspace.writeFile(p, data, enc, true),
     readdir: (p) => workspace.list(p),
-    stat: (p) => workspace.stat(p)
+    stat: (p) => workspace.stat(p),
+    mkdir: (p, recursive = false) => workspace.mkdir(p, recursive),
+    deletePath: (p) => workspace.delete(p)
   };
 }
 

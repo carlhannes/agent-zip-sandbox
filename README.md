@@ -5,6 +5,9 @@ ZIP-backed virtual workspace + JS/TS execution sandbox for agent workflows.
 The goal is to give an LLM (or any agent) a **portable “virtual USB drive”** backed by a `.zip` file, plus a
 way to **execute JavaScript/TypeScript** that reads/writes that virtual filesystem (not the host filesystem).
 
+Note: the system prompt + tool schemas presented to the model refer to this as a “workspace” (not “ZIP workspace”),
+to reduce confusion. The persistence format is still a `.zip`.
+
 Core building blocks:
 
 - **esbuild** (bundle + transpile) with plugins that load files from the ZIP workspace
@@ -58,6 +61,7 @@ Execution is split into two parts:
 1) **Bundling (esbuild)**: `src/esbuild_plugins.js` loads files from `ZipWorkspace` and provides shim modules:
    - `fs` / `fs/promises` shims that forward to an injected `__vfs`
    - a minimal POSIX-only `path` shim (so sandbox code can do `import path from "path"`)
+   - a minimal `os` shim (`EOL`, `homedir()`, `tmpdir()`)
 
    All non-relative imports are blocked unless they are one of the shims above (everything else must live in the workspace).
 
@@ -134,6 +138,7 @@ It writes JSON on stdout:
 - Paths are normalized as POSIX and rooted at `~/` (which maps to `/`).
 - `fs` and `fs/promises` are shimmed to the workspace.
 - `path` / `node:path` is a small POSIX-only shim (no host Node builtin modules are loaded at runtime).
+- `os` / `node:os` is a small shim (`EOL`, `homedir()`, `tmpdir()`).
 - Non-relative imports are blocked (everything must be in the workspace or a shim).
 
 ## Search

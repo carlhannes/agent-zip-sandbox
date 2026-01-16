@@ -1,6 +1,6 @@
 import path from "node:path";
 import { normPath } from "./path_utils.js";
-import { makeFsShim, makeFsPromisesShim, makePathPosixShim } from "./vfs_shims.js";
+import { makeFsShim, makeFsPromisesShim, makePathPosixShim, makeOsShim } from "./vfs_shims.js";
 
 const posix = path.posix;
 
@@ -43,6 +43,8 @@ export function workspaceResolverPlugin(workspace, entryPath) {
           spec === "node:fs" ||
           spec === "fs/promises" ||
           spec === "node:fs/promises" ||
+          spec === "os" ||
+          spec === "node:os" ||
           spec === "path" ||
           spec === "node:path"
         ) {
@@ -114,6 +116,9 @@ export function workspaceResolverPlugin(workspace, entryPath) {
         if (args.path === "fs/promises" || args.path === "node:fs/promises") {
           return { contents: makeFsPromisesShim(), loader: "js" };
         }
+        if (args.path === "os" || args.path === "node:os") {
+          return { contents: makeOsShim(), loader: "js" };
+        }
         if (args.path === "path" || args.path === "node:path") {
           return { contents: makePathPosixShim(), loader: "js" };
         }
@@ -144,6 +149,8 @@ export function blockNonRelativeImportsPlugin() {
           spec === "node:fs" ||
           spec === "fs/promises" ||
           spec === "node:fs/promises" ||
+          spec === "os" ||
+          spec === "node:os" ||
           spec === "path" ||
           spec === "node:path";
         if (isRel || isAbs || isShim) return null;

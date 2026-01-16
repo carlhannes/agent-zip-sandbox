@@ -54,6 +54,7 @@ export function runBundledCjs({
   // Hardening: disable eval/new Function inside this context (best effort).
   const context = vm.createContext(sandbox, {
     name: "agent-sandbox",
+    microtaskMode: "afterEvaluate",
     codeGeneration: { strings: false, wasm: false }
   });
 
@@ -68,6 +69,9 @@ export function runBundledCjs({
 
   // Execute
   fn(safeRequire, module, exports);
+
+  // Allow promise microtasks created during execution to run (best-effort).
+  new vm.Script("").runInContext(context, { timeout: timeoutMs });
 
   return {
     stdout: logs.join("\n"),

@@ -211,7 +211,8 @@ function makeSystemPrompt() {
     "",
     "Notes:",
     "- `fs` and `fs/promises` are virtual shims inside the sandbox.",
-    "- `path` is a POSIX-only shim (use it for basic join/dirname/basename/normalize if needed)."
+    "- `path` is a POSIX-only shim (use it for basic join/dirname/basename/normalize if needed).",
+    "- `os` is a minimal shim (EOL, homedir(), tmpdir())."
   ].join("\n");
 }
 

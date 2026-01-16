@@ -7,6 +7,8 @@
  *   __vfs.writeFile(path, data, enc?) -> void
  *   __vfs.readdir(path) -> string[]
  *   __vfs.stat(path) -> { type, size }
+ *   __vfs.mkdir(path, recursive?) -> void
+ *   __vfs.deletePath(path) -> void
  *
  * IMPORTANT: These shims intentionally implement only a small subset.
  */
@@ -18,14 +20,44 @@ export function makeFsShim() {
       return globalThis.__vfs;
     };
 
+    function __err(code, msg) {
+      const e = new Error(msg || code);
+      e.code = code;
+      return e;
+    }
+
     export function readFileSync(path, opts) {
       const enc = typeof opts === "string" ? opts : (opts && opts.encoding) || null;
       return __get().readFile(path, enc);
     }
 
+    export function readFile(path, opts, cb) {
+      const callback = typeof opts === "function" ? opts : cb;
+      const enc = typeof opts === "string" ? opts : (opts && opts.encoding) || null;
+      if (typeof callback !== "function") throw new TypeError("callback must be a function");
+      try {
+        const out = __get().readFile(path, enc);
+        Promise.resolve().then(() => callback(null, out));
+      } catch (e) {
+        Promise.resolve().then(() => callback(e));
+      }
+    }
+
     export function writeFileSync(path, data, opts) {
       const enc = typeof opts === "string" ? opts : (opts && opts.encoding) || "utf8";
       return __get().writeFile(path, data, enc);
+    }
+
+    export function writeFile(path, data, opts, cb) {
+      const callback = typeof opts === "function" ? opts : cb;
+      const enc = typeof opts === "string" ? opts : (opts && opts.encoding) || "utf8";
+      if (typeof callback !== "function") throw new TypeError("callback must be a function");
+      try {
+        __get().writeFile(path, data, enc);
+        Promise.resolve().then(() => callback(null));
+      } catch (e) {
+        Promise.resolve().then(() => callback(e));
+      }
     }
 
     export function readdirSync(path) {
@@ -38,7 +70,7 @@ export function makeFsShim() {
 
     export function statSync(path) {
       const s = __get().stat(path);
-      if (!s) { const e = new Error("ENOENT"); e.code = "ENOENT"; throw e; }
+      if (!s) throw __err("ENOENT");
       return {
         isFile: () => s.type === "file",
         isDirectory: () => s.type === "dir",
@@ -46,7 +78,36 @@ export function makeFsShim() {
       };
     }
 
-    export default { readFileSync, writeFileSync, readdirSync, existsSync, statSync };
+    export function mkdirSync(path, opts) {
+      const recursive = !!(opts && typeof opts === "object" && opts.recursive);
+      return __get().mkdir(path, recursive);
+    }
+
+    export function unlinkSync(path) {
+      const s = __get().stat(path);
+      if (!s) throw __err("ENOENT");
+      if (s.type !== "file") throw __err("EISDIR");
+      return __get().deletePath(path);
+    }
+
+    export function rmSync(path, opts) {
+      const recursive = !!(opts && typeof opts === "object" && opts.recursive);
+      if (recursive) throw __err("ERR_NOT_SUPPORTED", "rmSync: recursive is not supported");
+      return __get().deletePath(path);
+    }
+
+    export default {
+      readFileSync,
+      readFile,
+      writeFileSync,
+      writeFile,
+      readdirSync,
+      existsSync,
+      statSync,
+      mkdirSync,
+      unlinkSync,
+      rmSync
+    };
   `;
 }
 
@@ -56,6 +117,12 @@ export function makeFsPromisesShim() {
       if (!globalThis.__vfs) throw new Error("Missing __vfs in sandbox context");
       return globalThis.__vfs;
     };
+
+    function __err(code, msg) {
+      const e = new Error(msg || code);
+      e.code = code;
+      return e;
+    }
 
     export async function readFile(path, opts) {
       const enc = typeof opts === "string" ? opts : (opts && opts.encoding) || null;
@@ -67,7 +134,39 @@ export function makeFsPromisesShim() {
       return __get().writeFile(path, data, enc);
     }
 
-    export default { readFile, writeFile };
+    export async function readdir(path) {
+      return __get().readdir(path);
+    }
+
+    export async function stat(path) {
+      const s = __get().stat(path);
+      if (!s) throw __err("ENOENT");
+      return {
+        isFile: () => s.type === "file",
+        isDirectory: () => s.type === "dir",
+        size: s.size
+      };
+    }
+
+    export async function mkdir(path, opts) {
+      const recursive = !!(opts && typeof opts === "object" && opts.recursive);
+      return __get().mkdir(path, recursive);
+    }
+
+    export async function unlink(path) {
+      const s = __get().stat(path);
+      if (!s) throw __err("ENOENT");
+      if (s.type !== "file") throw __err("EISDIR");
+      return __get().deletePath(path);
+    }
+
+    export async function rm(path, opts) {
+      const recursive = !!(opts && typeof opts === "object" && opts.recursive);
+      if (recursive) throw __err("ERR_NOT_SUPPORTED", "rm: recursive is not supported");
+      return __get().deletePath(path);
+    }
+
+    export default { readFile, writeFile, readdir, stat, mkdir, unlink, rm };
   `;
 }
 
@@ -151,6 +250,53 @@ export function makePathPosixShim() {
       return idx === -1 ? withoutTrailing : withoutTrailing.slice(idx + 1);
     }
 
+    export function extname(p) {
+      __assertPath(p);
+      const b = basename(p);
+      if (b === "/" || b.length === 0) return "";
+      const idx = b.lastIndexOf(".");
+      if (idx <= 0) return "";
+      return b.slice(idx);
+    }
+
+    export function relative(from, to) {
+      __assertPath(from);
+      __assertPath(to);
+      const fromRes = resolve(from);
+      const toRes = resolve(to);
+      if (fromRes === toRes) return "";
+      const fromParts = fromRes.split("/").filter(Boolean);
+      const toParts = toRes.split("/").filter(Boolean);
+      let i = 0;
+      while (i < fromParts.length && i < toParts.length && fromParts[i] === toParts[i]) i += 1;
+      const out = [];
+      for (let up = i; up < fromParts.length; up += 1) out.push("..");
+      out.push(...toParts.slice(i));
+      return out.join("/");
+    }
+
+    export function parse(p) {
+      __assertPath(p);
+      const n = normalize(p);
+      if (n === "/") return { root: "/", dir: "/", base: "", ext: "", name: "" };
+      const root = isAbsolute(n) ? "/" : "";
+      const dir0 = dirname(n);
+      const dir = dir0 === "." ? "" : dir0;
+      const base = basename(n);
+      const ext = extname(base);
+      const name = ext ? base.slice(0, Math.max(0, base.length - ext.length)) : base;
+      return { root, dir, base, ext, name };
+    }
+
+    export function format(obj) {
+      if (!obj || typeof obj !== "object") throw new TypeError("obj must be an object");
+      const dir = obj.dir || obj.root || "";
+      const base = obj.base || ((obj.name || "") + (obj.ext || ""));
+      if (!dir) return base;
+      if (dir === "/") return base ? "/" + base : "/";
+      return normalize(dir + "/" + base);
+    }
+
     export function isAbsolute(p) {
       __assertPath(p);
       return p.startsWith("/");
@@ -164,6 +310,10 @@ export function makePathPosixShim() {
       resolve,
       dirname,
       basename,
+      extname,
+      relative,
+      parse,
+      format,
       isAbsolute
     };
 
@@ -175,5 +325,21 @@ export function makePathPosixShim() {
       // We intentionally only support POSIX paths in the sandbox.
       win32: posix
     };
+  `;
+}
+
+export function makeOsShim() {
+  return `
+    export const EOL = "\\n";
+
+    export function homedir() {
+      return "/";
+    }
+
+    export function tmpdir() {
+      return "/tmp";
+    }
+
+    export default { EOL, homedir, tmpdir };
   `;
 }

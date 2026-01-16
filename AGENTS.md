@@ -6,6 +6,8 @@ This repo is a small reference implementation for:
 
 For user-facing docs and usage, see `README.md`.
 
+Note: the system prompt + tool schemas shown to the model call it a “workspace” (not “ZIP workspace”).
+
 ## Commands
 
 - Install deps: `npm i`
@@ -22,7 +24,7 @@ For user-facing docs and usage, see `README.md`.
   - `src/tools.js`: LLM-friendly FS tools (`fs_*`, including `fs_read_lines` + `fs_patch_lines`)
 - Sandbox execution:
   - `src/esbuild_plugins.js`: loads workspace modules + provides shim modules; blocks non-relative imports
-  - `src/vfs_shims.js`: source generators for shim modules (`fs`, `fs/promises`, `path`)
+  - `src/vfs_shims.js`: source generators for shim modules (`fs`, `fs/promises`, `path`, `os`)
   - `src/vm_runner.js`: runs bundled output in `node:vm` (no host `require`, eval disabled)
   - `src/sandbox_runner.js`: stdin JSON → bundle → VM run → stdout JSON (updated ZIP)
 - Host integration:
