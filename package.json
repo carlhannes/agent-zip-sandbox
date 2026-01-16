@@ -1,0 +1,19 @@
+{
+  "name": "agent-zip-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZIP-backed virtual workspace + esbuild bundling + Node vm sandbox runner (reference implementation).",
+  "license": "MIT",
+  "scripts": {
+    "demo": "node src/host_demo.js",
+    "sandbox": "node src/sandbox_runner.js",
+    "tui": "node src/tui.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "esbuild": "^0.27.2",
+    "fflate": "^0.8.2",
+    "openai": "^4.76.0"
+  }
+}
