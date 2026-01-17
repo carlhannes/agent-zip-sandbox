@@ -31,6 +31,7 @@ Note: the system prompt + tool schemas shown to the model call it a “workspace
   - `src/host_session.js`: spawns `sandbox_runner`, persists ZIP after mutating tool calls
   - `src/tui.js`: simple REPL that uses Ollama’s OpenAI-compatible endpoint + tool-calling
   - `src/chat_store.js`: chat persistence (outside the ZIP)
+  - `src/plan.js`: chat-scoped TODO plan helpers (`plan_read`, `plan_update`)
   - `src/persist.js`: atomic file writes for ZIP/chat logs
   - `src/ui.js`: ANSI formatting + tool summaries for the TUI
 - Time machine:

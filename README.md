@@ -100,6 +100,13 @@ This will also create/update a chat log next to the ZIP (default: `./workspace.z
 
 The TUI autosaves the ZIP after **mutating** tool calls (writes/patches/deletes and `js_exec`).
 
+### Plan (TODO list)
+
+The agent has a chat-scoped TODO plan (stored in the chat log JSON, not in the workspace):
+
+- Tools: `plan_read`, `plan_update`
+- TUI: `:plan` to show it
+
 ## Time machine (history / undo / redo)
 
 The workspace includes an internal history store under `~/.time/` (stored inside the workspace ZIP).
@@ -113,6 +120,7 @@ The workspace includes an internal history store under `~/.time/` (stored inside
 TUI commands:
 
 ```bash
+:plan
 :history [n]
 :diff <id>
 :undo [n]

@@ -82,6 +82,11 @@ export function formatToolArgs(toolName, args) {
       push("entryPath", a.entryPath);
       if (Array.isArray(a.argv)) push("argv", a.argv);
       break;
+    case "plan_read":
+      break;
+    case "plan_update":
+      if (Array.isArray(a.items)) push("items", a.items);
+      break;
     default: {
       const keys = Object.keys(a).slice(0, 6);
       for (const k of keys) push(k, a[k]);
@@ -101,6 +106,12 @@ export function summarizeToolResult(toolName, out) {
   }
 
   switch (toolName) {
+    case "plan_read":
+    case "plan_update": {
+      const items = Array.isArray(out.plan?.items) ? out.plan.items : [];
+      const inProgress = items.filter((it) => it?.status === "in_progress").length;
+      return `items=${items.length} in_progress=${inProgress}`;
+    }
     case "fs_read": {
       const enc = out.encoding || "utf8";
       const len = typeof out.content === "string" ? out.content.length : 0;
