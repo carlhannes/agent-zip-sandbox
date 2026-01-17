@@ -1,6 +1,8 @@
 import path from "node:path";
 const posix = path.posix;
 
+export const TIME_DIR = "/.time";
+
 /**
  * Normalize a user path into a POSIX absolute path rooted at "/".
  * Accepts "~/x", "/x", "x".
@@ -18,6 +20,11 @@ export function normPath(p) {
   // Canonicalize: no trailing slashes except root.
   if (p.length > 1) p = p.replace(/\/+$/, "");
   return p;
+}
+
+export function isTimePath(p) {
+  const n = normPath(p);
+  return n === TIME_DIR || n.startsWith(TIME_DIR + "/");
 }
 
 export function dirname(p) {

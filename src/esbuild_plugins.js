@@ -1,5 +1,5 @@
 import path from "node:path";
-import { normPath } from "./path_utils.js";
+import { normPath, TIME_DIR } from "./path_utils.js";
 import { makeFsShim, makeFsPromisesShim, makePathPosixShim, makeOsShim } from "./vfs_shims.js";
 
 const posix = path.posix;
@@ -28,11 +28,15 @@ export function workspaceResolverPlugin(workspace, entryPath) {
   return {
     name: "workspace-resolver",
     setup(build) {
+      const isBlocked = (p) => p === TIME_DIR || p.startsWith(TIME_DIR + "/");
+
       // Entry point resolution
       build.onResolve({ filter: /.*/ }, (args) => {
         // Only handle the entry explicitly via args.kind === 'entry-point'
         if (args.kind === "entry-point") {
-          return { path: normPath(entryPath), namespace: "zip" };
+          const p = normPath(entryPath);
+          if (isBlocked(p)) return { errors: [{ text: `Blocked workspace path: ${p}` }] };
+          return { path: p, namespace: "zip" };
         }
 
         const spec = args.path;
@@ -65,6 +69,9 @@ export function workspaceResolverPlugin(workspace, entryPath) {
           const baseDir = posix.dirname(importer);
 
           const candidateBase = isAbs ? normPath(spec) : normPath(posix.join(baseDir, spec));
+          if (isBlocked(candidateBase)) {
+            return { errors: [{ text: `Blocked workspace path: ${candidateBase}` }] };
+          }
 
           const candidates = [
             candidateBase,
@@ -83,6 +90,7 @@ export function workspaceResolverPlugin(workspace, entryPath) {
           ];
 
           for (const p of candidates) {
+            if (isBlocked(p)) continue;
             const st = workspace.stat(p);
             if (st?.type === "file") return { path: p, namespace: "zip" };
           }
@@ -95,6 +103,7 @@ export function workspaceResolverPlugin(workspace, entryPath) {
 
       build.onLoad({ filter: /.*/, namespace: "zip" }, (args) => {
         const p = normPath(args.path);
+        if (isBlocked(p)) return { errors: [{ text: `Blocked workspace path: ${p}` }] };
         const buf = workspace.readFile(p);
 
         let loader = "js";

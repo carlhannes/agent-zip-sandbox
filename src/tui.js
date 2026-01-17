@@ -222,7 +222,12 @@ function usage() {
     "  npm run tui -- --zip <path/to/workspace.zip> [--chat <path/to/chat.json>] [--model <model>] [--base-url <url>] [--verbose-tools]",
     "",
     "Commands:",
-    "  :quit    Exit",
+    "  :quit               Exit",
+    "  :history [n]        Show recent workspace history",
+    "  :diff <id>          Show a small diff summary for a history entry",
+    "  :undo [n]           Undo last change(s)",
+    "  :redo [n]           Redo change(s)",
+    "  :restore <id>       Restore workspace to a specific history entry",
     "",
     "Options:",
     "  --verbose-tools   Print full tool JSON + autosave info",
@@ -268,7 +273,7 @@ async function main() {
   if (!existed) {
     await saveWorkspaceToZipPath(workspace, zipPath);
   }
-  const { handlers: toolHandlers, getLastPersist } = createHostToolHandlers({ workspace, zipPath });
+  const { handlers: toolHandlers, getLastPersist, time } = createHostToolHandlers({ workspace, zipPath });
 
   const systemPrompt = makeSystemPrompt();
   const loadedChatState = await loadChatState(chatPath);
@@ -428,6 +433,107 @@ async function main() {
     const text = (line ?? "").trim();
     if (!text) continue;
     if (text === ":quit" || text === ":q" || text === "exit") break;
+
+    if (text.startsWith(":")) {
+      const parts = text.slice(1).trim().split(/\s+/).filter(Boolean);
+      const cmd = parts[0] || "";
+      const arg1 = parts[1] || "";
+
+      if (cmd === "history") {
+        try {
+          const limit = arg1 ? Number(arg1) : 20;
+          const h = time.history({ limit });
+          console.log(styles.yellow(`-- history (cursor ${h.cursor}/${h.total}) --`));
+          for (let i = 0; i < h.entries.length; i += 1) {
+            const e = h.entries[i];
+            const absIndex = h.total - h.entries.length + i;
+            const marker = absIndex < h.cursor ? styles.green("●") : styles.dim("○");
+            const compacted = e.compacted ? styles.dim(" (compacted)") : "";
+            console.log(
+              `${marker} ${styles.cyan(e.id)} ${styles.dim(e.createdAt)} ${styles.dim(e.tool)} ${styles.dim(
+                `${e.changedPaths} change(s)`
+              )}${compacted}`
+            );
+          }
+        } catch (err) {
+          console.log(styles.red(`history failed: ${String(err?.message || err)}`));
+        }
+        continue;
+      }
+
+      if (cmd === "diff") {
+        if (!arg1) {
+          console.log(styles.red("Usage: :diff <id>"));
+          continue;
+        }
+        try {
+          const d = time.diff({ id: arg1 });
+          if (!d.ok) {
+            console.log(styles.red(`diff failed: ${d.error || "unknown error"}`));
+            continue;
+          }
+          console.log(styles.yellow(`-- diff ${d.id} (${d.tool}) ${styles.dim(d.createdAt)} --`));
+          for (const f of d.files || []) {
+            console.log(
+              `${styles.cyan(f.op)} ${styles.cyan(f.path)} ${styles.dim(`${f.beforeSize}→${f.afterSize} bytes`)}${
+                f.isText ? styles.dim(" (text)") : styles.dim(" (binary)")
+              }`
+            );
+          }
+          for (const dd of d.dirs || []) {
+            console.log(`${styles.cyan(dd.op)} ${styles.cyan(dd.path)}`);
+          }
+        } catch (err) {
+          console.log(styles.red(`diff failed: ${String(err?.message || err)}`));
+        }
+        continue;
+      }
+
+      if (cmd === "undo" || cmd === "redo") {
+        try {
+          const steps = arg1 ? Number(arg1) : 1;
+          const action = cmd === "undo" ? time.undo : time.redo;
+          const res = await action({ steps });
+          console.log(styles.yellow(`-- ${cmd} --`));
+          console.log(styles.dim(JSON.stringify(res)));
+          chatState.messages.push({
+            role: "system",
+            content: `Workspace changed by host command :${cmd} (${Number.isFinite(steps) ? steps : 1} step(s)) at ${new Date().toISOString()}. Re-check files before proceeding.`
+          });
+          await saveChatState(chatPath, chatState);
+        } catch (err) {
+          console.log(styles.red(`${cmd} failed: ${String(err?.message || err)}`));
+        }
+        continue;
+      }
+
+      if (cmd === "restore") {
+        if (!arg1) {
+          console.log(styles.red("Usage: :restore <id>"));
+          continue;
+        }
+        try {
+          const res = await time.restore({ id: arg1 });
+          if (!res.ok) {
+            console.log(styles.red(`restore failed: ${res.error || "unknown error"}`));
+            continue;
+          }
+          console.log(styles.yellow(`-- restore --`));
+          console.log(styles.dim(JSON.stringify(res)));
+          chatState.messages.push({
+            role: "system",
+            content: `Workspace changed by host command :restore (${arg1}) at ${new Date().toISOString()}. Re-check files before proceeding.`
+          });
+          await saveChatState(chatPath, chatState);
+        } catch (err) {
+          console.log(styles.red(`restore failed: ${String(err?.message || err)}`));
+        }
+        continue;
+      }
+
+      console.log(styles.red(`Unknown command: ${text}`));
+      continue;
+    }
 
     chatState.messages.push({ role: "user", content: line });
     await saveChatState(chatPath, chatState);
