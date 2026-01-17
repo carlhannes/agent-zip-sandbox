@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import { ZipWorkspace } from "./workspace.js";
-import { normPath } from "./path_utils.js";
+import { normPath, TIME_DIR } from "./path_utils.js";
 import { workspaceResolverPlugin, blockNonRelativeImportsPlugin } from "./esbuild_plugins.js";
 import { runBundledCjs } from "./vm_runner.js";
 
@@ -16,13 +16,39 @@ function readAllStdin() {
 }
 
 function makeVfs(workspace) {
+  const isBlocked = (p) => {
+    const n = normPath(p);
+    return n === TIME_DIR || n.startsWith(TIME_DIR + "/");
+  };
+
   return {
-    readFile: (p, enc = null) => workspace.readFile(p, enc),
-    writeFile: (p, data, enc = "utf8") => workspace.writeFile(p, data, enc, true),
-    readdir: (p) => workspace.list(p),
-    stat: (p) => workspace.stat(p),
-    mkdir: (p, recursive = false) => workspace.mkdir(p, recursive),
-    deletePath: (p) => workspace.delete(p)
+    readFile: (p, enc = null) => {
+      if (isBlocked(p)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return workspace.readFile(p, enc);
+    },
+    writeFile: (p, data, enc = "utf8") => {
+      if (isBlocked(p)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      return workspace.writeFile(p, data, enc, true);
+    },
+    readdir: (p) => {
+      const n = normPath(p);
+      if (n === TIME_DIR || n.startsWith(TIME_DIR + "/")) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      const entries = workspace.list(n);
+      if (n === "/") return entries.filter((e) => e !== ".time");
+      return entries;
+    },
+    stat: (p) => {
+      if (isBlocked(p)) return null;
+      return workspace.stat(p);
+    },
+    mkdir: (p, recursive = false) => {
+      if (isBlocked(p)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      return workspace.mkdir(p, recursive);
+    },
+    deletePath: (p) => {
+      if (isBlocked(p)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      return workspace.delete(p);
+    }
   };
 }
 

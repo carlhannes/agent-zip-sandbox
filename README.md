@@ -100,6 +100,26 @@ This will also create/update a chat log next to the ZIP (default: `./workspace.z
 
 The TUI autosaves the ZIP after **mutating** tool calls (writes/patches/deletes and `js_exec`).
 
+## Time machine (history / undo / redo)
+
+The workspace includes an internal history store under `~/.time/` (stored inside the workspace ZIP).
+
+- The agent cannot see or modify `~/.time/`:
+  - `fs_*` tools block it, and `fs_list ~/` filters it out.
+  - `js_exec` code cannot access it via the sandbox `fs` shim.
+- The host records a history entry after every mutating tool call (`fs_write`, `fs_patch_lines`, `fs_mkdir`, `fs_delete`, `js_exec`).
+- History compacts older entries automatically (default: keep last 50, cap at 200; older entries are merged).
+
+TUI commands:
+
+```bash
+:history [n]
+:diff <id>
+:undo [n]
+:redo [n]
+:restore <id>
+```
+
 Demo will:
 1) create a workspace in RAM
 2) write a small script that uses `fs` to write a file under `~/`

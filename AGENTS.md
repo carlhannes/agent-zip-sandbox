@@ -33,6 +33,10 @@ Note: the system prompt + tool schemas shown to the model call it a “workspace
   - `src/chat_store.js`: chat persistence (outside the ZIP)
   - `src/persist.js`: atomic file writes for ZIP/chat logs
   - `src/ui.js`: ANSI formatting + tool summaries for the TUI
+- Time machine:
+  - `src/time_machine.js`: history store inside the workspace (`~/.time/`) + undo/redo/restore + compaction
+  - `src/host_session.js`: records history for mutating tool calls + exposes host-only history actions to the TUI
+  - `src/tui.js`: `:history` / `:diff` / `:undo` / `:redo` / `:restore` commands + chat “workspace changed” system notes
 
 ## Invariants (keep these true)
 
@@ -43,6 +47,7 @@ Note: the system prompt + tool schemas shown to the model call it a “workspace
 - **Paths are POSIX** and rooted at `~/` (maps to `/`).
 - Prefer **line-based edits** for LLMs: `fs_read_lines` + `fs_patch_lines` over whole-file rewrites.
 - Prefer **search → read → patch** workflows: `fs_search` → `fs_read_lines` → `fs_patch_lines`.
+- The `~/.time/` folder is reserved for host-managed history and should remain invisible to the agent.
 
 ## GOTCHAs
 

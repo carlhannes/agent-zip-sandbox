@@ -1,4 +1,4 @@
-import { normPath } from "./path_utils.js";
+import { normPath, TIME_DIR } from "./path_utils.js";
 
 function clipLine(line, maxLineLength) {
   const s = String(line ?? "").replace(/\r$/, "");
@@ -40,9 +40,17 @@ function matchesLine(line, query, { caseSensitive }) {
  * All paths are normalized and rooted at "~/" => "/".
  */
 export function createWorkspaceTools(workspace) {
+  function assertUserPath(p) {
+    const n = normPath(p);
+    if (n === TIME_DIR || n.startsWith(TIME_DIR + "/")) {
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    }
+    return n;
+  }
+
   return {
     fs_read({ path, encoding = "utf8", maxBytes = 2_000_000 }) {
-      const p = normPath(path);
+      const p = assertUserPath(path);
       const st = workspace.stat(p);
       if (!st || st.type !== "file") throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       if (st.size > maxBytes) throw Object.assign(new Error("EFBIG"), { code: "EFBIG" });
@@ -56,7 +64,7 @@ export function createWorkspaceTools(workspace) {
     },
 
     fs_read_lines({ path, startLine = 1, endLine = 200, maxBytes = 2_000_000 }) {
-      const p = normPath(path);
+      const p = assertUserPath(path);
       const st = workspace.stat(p);
       if (!st || st.type !== "file") throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       if (st.size > maxBytes) throw Object.assign(new Error("EFBIG"), { code: "EFBIG" });
@@ -95,7 +103,7 @@ export function createWorkspaceTools(workspace) {
       const q = String(query ?? "");
       if (!q) throw new Error("query must be a non-empty string");
 
-      const prefixPath = normPath(pathPrefix);
+      const prefixPath = assertUserPath(pathPrefix);
       const prefixStat = workspace.stat(prefixPath);
       if (!prefixStat) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
 
@@ -111,6 +119,7 @@ export function createWorkspaceTools(workspace) {
       } else {
         const dirPrefix = prefixPath === "/" ? "/" : prefixPath + "/";
         for (const p of workspace.files.keys()) {
+          if (p === TIME_DIR || p.startsWith(TIME_DIR + "/")) continue;
           if (p.startsWith(dirPrefix)) filePaths.push(p);
         }
         filePaths.sort();
@@ -251,7 +260,7 @@ export function createWorkspaceTools(workspace) {
     },
 
     fs_write({ path, content, encoding = "utf8", overwrite = true }) {
-      const p = normPath(path);
+      const p = assertUserPath(path);
       if (encoding === "base64") {
         const buf = Buffer.from(content, "base64");
         workspace.writeFile(p, buf, "utf8", overwrite);
@@ -262,26 +271,27 @@ export function createWorkspaceTools(workspace) {
     },
 
     fs_list({ path = "~/" }) {
-      const p = normPath(path);
-      const entries = workspace.list(p);
+      const p = assertUserPath(path);
+      let entries = workspace.list(p);
+      if (p === "/") entries = entries.filter((e) => e !== ".time");
       return { path: p, entries };
     },
 
     fs_stat({ path }) {
-      const p = normPath(path);
+      const p = assertUserPath(path);
       const st = workspace.stat(p);
       if (!st) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       return { path: p, ...st };
     },
 
     fs_mkdir({ path, recursive = true }) {
-      const p = normPath(path);
+      const p = assertUserPath(path);
       workspace.mkdir(p, recursive);
       return { ok: true, path: p };
     },
 
     fs_delete({ path }) {
-      const p = normPath(path);
+      const p = assertUserPath(path);
       workspace.delete(p);
       return { ok: true, path: p };
     },
@@ -291,7 +301,7 @@ export function createWorkspaceTools(workspace) {
      * This avoids unified-diff parsing complexity but still enables precise edits.
      */
     fs_patch_lines({ path, startLine, endLine, replacement }) {
-      const p = normPath(path);
+      const p = assertUserPath(path);
       const text = workspace.readFile(p, "utf8");
       const lines = text.split(/\r?\n/);
 

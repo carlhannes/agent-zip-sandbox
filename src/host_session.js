@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ZipWorkspace } from "./workspace.js";
+import { timeInit, timeRecord, timeUndo, timeRedo, timeList, timeRestore, timeDiff } from "./time_machine.js";
+import { normPath } from "./path_utils.js";
 import { createWorkspaceTools } from "./tools.js";
 import { atomicWriteFile } from "./persist.js";
 
@@ -166,8 +168,53 @@ export function createHostToolHandlers({ workspace, zipPath }) {
 
   for (const [name, fn] of Object.entries(base)) {
     handlers[name] = async (args) => {
-      const result = fn(sanitizeArgs(name, args));
-      if (MUTATING_TOOLS.has(name)) await persist();
+      const sanitized = sanitizeArgs(name, args);
+      const normedPath = typeof sanitized?.path === "string" ? normPath(sanitized.path) : null;
+
+      let beforeFile = null;
+      if (name === "fs_write" || name === "fs_patch_lines" || name === "fs_delete") {
+        const p = normedPath;
+        if (p) {
+          const st = workspace.stat(p);
+          if (st?.type === "file") beforeFile = workspace.readFile(p);
+        }
+      }
+
+      const beforeDirExists = normedPath ? workspace.stat(normedPath)?.type === "dir" : false;
+
+      const result = fn(sanitized);
+
+      if (MUTATING_TOOLS.has(name)) {
+        timeInit(workspace);
+
+        // Record file change (single-path tools).
+        const beforeFiles = new Map();
+        const afterFiles = new Map();
+        const p = normedPath;
+        if (p) {
+          if (beforeFile) beforeFiles.set(p, beforeFile);
+          const stAfter = workspace.stat(p);
+          if (stAfter?.type === "file") afterFiles.set(p, workspace.readFile(p));
+        }
+
+        // Record dir change only for explicit directory ops.
+        const beforeDirs = new Set();
+        const afterDirs = new Set();
+        if ((name === "fs_mkdir" || name === "fs_delete") && p) {
+          const afterDirExists = workspace.stat(p)?.type === "dir";
+          if (beforeDirExists) beforeDirs.add(p);
+          if (afterDirExists) afterDirs.add(p);
+        }
+
+        try {
+          timeRecord(workspace, { tool: name, beforeFiles, afterFiles, beforeDirs, afterDirs });
+        } catch {
+          // If history recording fails, continue without blocking the main operation.
+        }
+
+        await persist();
+      }
+
       return result;
     };
   }
@@ -177,6 +224,8 @@ export function createHostToolHandlers({ workspace, zipPath }) {
     const argv = Array.isArray(args?.argv) ? args.argv.map(String) : [];
     const env = {};
     const timeoutMs = DEFAULT_EXEC_TIMEOUT_MS;
+
+    const beforeFiles = new Map(workspace.files);
 
     const zip0 = workspace.exportZipBuffer();
     const req = {
@@ -205,6 +254,20 @@ export function createHostToolHandlers({ workspace, zipPath }) {
 
     const zip1 = Buffer.from(resp.zipBase64 || "", "base64");
     workspace.importZip(zip1);
+
+    // Record file-level changes from the execution.
+    try {
+      timeRecord(workspace, {
+        tool: "js_exec",
+        beforeFiles,
+        afterFiles: new Map(workspace.files),
+        beforeDirs: new Set(),
+        afterDirs: new Set()
+      });
+    } catch {
+      // continue without blocking
+    }
+
     await persist();
 
     return {
@@ -217,6 +280,25 @@ export function createHostToolHandlers({ workspace, zipPath }) {
 
   return {
     handlers,
-    getLastPersist: () => lastPersist
+    getLastPersist: () => lastPersist,
+    time: {
+      history: (opts) => timeList(workspace, opts),
+      diff: (opts) => timeDiff(workspace, opts),
+      undo: async (opts) => {
+        const out = timeUndo(workspace, opts);
+        await persist();
+        return out;
+      },
+      redo: async (opts) => {
+        const out = timeRedo(workspace, opts);
+        await persist();
+        return out;
+      },
+      restore: async (opts) => {
+        const out = timeRestore(workspace, opts);
+        await persist();
+        return out;
+      }
+    }
   };
 }
