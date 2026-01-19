@@ -107,6 +107,13 @@ The agent has a chat-scoped TODO plan (stored in the chat log JSON, not in the w
 - Tools: `plan_read`, `plan_update`
 - TUI: `:plan` to show it
 
+### Skills
+
+The TUI can expose reusable “skills” (workflow instructions) from the host repo under `skills/`.
+
+- Tools: `skill_list`, `skill_load`
+- Files: `skills/<name>/SKILL.md`
+
 ## Time machine (history / undo / redo)
 
 The workspace includes an internal history store under `~/.time/` (stored inside the workspace ZIP).

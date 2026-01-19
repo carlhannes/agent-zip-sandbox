@@ -6,6 +6,7 @@ import { loadWorkspaceFromZipPath, saveWorkspaceToZipPath, createHostToolHandler
 import { loadChatState, saveChatState } from "./chat_store.js";
 import { makeStyles, indentLines, formatToolArgs, summarizeToolResult } from "./ui.js";
 import { normalizeAndValidatePlanItems, formatPlanForTui, formatPlanReminderForModel } from "./plan.js";
+import { loadSkillsIndex, formatSkillsReminderForModel } from "./skills.js";
 
 dotenv.config();
 
@@ -67,6 +68,29 @@ function getToolSchemas() {
             }
           },
           required: ["items"],
+          additionalProperties: false
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "skill_list",
+        description: "List available skills (reusable workflows).",
+        parameters: { type: "object", properties: {}, additionalProperties: false }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "skill_load",
+        description: "Load a skill's instructions by name.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Skill name (e.g. 'csv')." }
+          },
+          required: ["name"],
           additionalProperties: false
         }
       }
@@ -240,6 +264,7 @@ function makeSystemPrompt() {
     "Rules:",
     "- The virtual filesystem root is `~/` (POSIX paths only).",
     "- Maintain a TODO plan with `plan_update` (at most one item can be `in_progress`).",
+    "- You may load reusable skills with `skill_list` / `skill_load`.",
     "- You must use the provided fs_* tools to read/write/list/stat/mkdir/delete files.",
     "- Use `fs_search` to locate relevant code/strings without reading entire files.",
     "- Prefer `fs_read_lines` + `fs_patch_lines` for edits; avoid rewriting entire files.",
@@ -307,6 +332,8 @@ async function main() {
   const roleAssistant = styles.bold("assistant:");
   const roleTool = styles.bold("tool:");
 
+  const skillsIndex = await loadSkillsIndex();
+
   const { workspace, existed } = await loadWorkspaceFromZipPath(zipPath);
   if (!existed) {
     await saveWorkspaceToZipPath(workspace, zipPath);
@@ -371,6 +398,24 @@ async function main() {
     }
   };
 
+  const skillHandlers = {
+    skill_list: async () => ({ ok: true, skills: skillsIndex.skills }),
+    skill_load: async (args) => {
+      const name = String(args?.name ?? "").trim();
+      if (!name) return { ok: false, error: "name must be a non-empty string" };
+      const skill = skillsIndex.byName.get(name);
+      if (!skill) return { ok: false, error: `Unknown skill: ${name}` };
+      return {
+        ok: true,
+        skill: {
+          name: skill.name,
+          description: skill.description,
+          content: skill.content
+        }
+      };
+    }
+  };
+
   function printAssistantText(text) {
     const s = String(text ?? "").trimEnd();
     if (!s) return;
@@ -387,7 +432,7 @@ async function main() {
     const tools = getToolSchemas();
 
     for (let iter = 0; iter < 25; iter += 1) {
-      const reminder = formatPlanReminderForModel(chatState.plan);
+      const reminder = `${formatSkillsReminderForModel(skillsIndex)}\n\n${formatPlanReminderForModel(chatState.plan)}`.trimEnd();
       const messagesForModel = (() => {
         const msgs = chatState.messages.slice();
         const idx = msgs.findIndex((m) => m?.role === "system" && typeof m?.content === "string");
@@ -459,7 +504,7 @@ async function main() {
           continue;
         }
 
-        const handler = toolHandlers[toolName] || planHandlers[toolName];
+        const handler = toolHandlers[toolName] || planHandlers[toolName] || skillHandlers[toolName];
         const argsSummary = formatToolArgs(toolName, argsObj);
         console.log(`${roleTool} ${styles.cyan("→")} ${styles.cyan(toolName)} ${styles.dim(argsSummary)}`.trimEnd());
 

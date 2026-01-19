@@ -87,6 +87,11 @@ export function formatToolArgs(toolName, args) {
     case "plan_update":
       if (Array.isArray(a.items)) push("items", a.items);
       break;
+    case "skill_list":
+      break;
+    case "skill_load":
+      push("name", a.name);
+      break;
     default: {
       const keys = Object.keys(a).slice(0, 6);
       for (const k of keys) push(k, a[k]);
@@ -111,6 +116,17 @@ export function summarizeToolResult(toolName, out) {
       const items = Array.isArray(out.plan?.items) ? out.plan.items : [];
       const inProgress = items.filter((it) => it?.status === "in_progress").length;
       return `items=${items.length} in_progress=${inProgress}`;
+    }
+    case "skill_list": {
+      const skills = Array.isArray(out.skills) ? out.skills : [];
+      const shown = skills.slice(0, 10).map((s) => String(s?.name ?? "")).filter(Boolean);
+      const suffix = skills.length > shown.length ? " …" : "";
+      return `skills=${skills.length}${shown.length ? ` [${shown.join(", ")}${suffix}]` : ""}`;
+    }
+    case "skill_load": {
+      const name = String(out.skill?.name ?? "");
+      const contentLen = typeof out.skill?.content === "string" ? out.skill.content.length : 0;
+      return `name=${JSON.stringify(name)} contentLen=${contentLen}`;
     }
     case "fs_read": {
       const enc = out.encoding || "utf8";
