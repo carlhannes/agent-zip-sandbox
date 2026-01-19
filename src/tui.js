@@ -5,6 +5,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { loadWorkspaceFromZipPath, saveWorkspaceToZipPath, createHostToolHandlers } from "./host_session.js";
 import { loadChatState, saveChatState } from "./chat_store.js";
 import { makeStyles, indentLines, formatToolArgs, summarizeToolResult } from "./ui.js";
+import { normalizeAndValidatePlanItems, formatPlanForTui, formatPlanReminderForModel } from "./plan.js";
 
 dotenv.config();
 
@@ -35,6 +36,41 @@ function parseArgs(argv) {
 
 function getToolSchemas() {
   return [
+    {
+      type: "function",
+      function: {
+        name: "plan_read",
+        description: "Read the current TODO plan for this chat.",
+        parameters: { type: "object", properties: {}, additionalProperties: false }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "plan_update",
+        description: "Replace the TODO plan for this chat (at most one item can be in_progress).",
+        parameters: {
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              description: "Ordered TODO items.",
+              items: {
+                type: "object",
+                properties: {
+                  step: { type: "string" },
+                  status: { type: "string", enum: ["pending", "in_progress", "completed", "canceled"] }
+                },
+                required: ["step", "status"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["items"],
+          additionalProperties: false
+        }
+      }
+    },
     {
       type: "function",
       function: {
@@ -203,6 +239,7 @@ function makeSystemPrompt() {
     "",
     "Rules:",
     "- The virtual filesystem root is `~/` (POSIX paths only).",
+    "- Maintain a TODO plan with `plan_update` (at most one item can be `in_progress`).",
     "- You must use the provided fs_* tools to read/write/list/stat/mkdir/delete files.",
     "- Use `fs_search` to locate relevant code/strings without reading entire files.",
     "- Prefer `fs_read_lines` + `fs_patch_lines` for edits; avoid rewriting entire files.",
@@ -222,6 +259,7 @@ function usage() {
     "  npm run tui -- --zip <path/to/workspace.zip> [--chat <path/to/chat.json>] [--model <model>] [--base-url <url>] [--verbose-tools]",
     "",
     "Commands:",
+    "  :plan               Show plan (per chat log)",
     "  :quit               Exit",
     "  :history [n]        Show recent workspace history",
     "  :diff <id>          Show a small diff summary for a history entry",
@@ -312,6 +350,27 @@ async function main() {
 
   const rl = readline.createInterface({ input, output });
 
+  function printPlan({ header } = {}) {
+    const items = Array.isArray(chatState?.plan?.items) ? chatState.plan.items : [];
+    const updatedAt = typeof chatState?.plan?.updatedAt === "string" ? chatState.plan.updatedAt : "";
+    const meta = updatedAt ? ` ${styles.dim(updatedAt)}` : "";
+    console.log(styles.yellow(header || `-- plan (${items.length} items) --${meta}`));
+    console.log(formatPlanForTui(chatState.plan, { styles }));
+  }
+
+  const planHandlers = {
+    plan_read: async () => {
+      const plan = chatState?.plan && typeof chatState.plan === "object" ? chatState.plan : { items: [], updatedAt: null };
+      return { ok: true, plan };
+    },
+    plan_update: async (args) => {
+      const normalized = normalizeAndValidatePlanItems(args?.items, { maxItems: 100, maxStepLength: 500 });
+      if (!normalized.ok) return normalized;
+      chatState.plan = { items: normalized.items, updatedAt: new Date().toISOString() };
+      return { ok: true, plan: chatState.plan };
+    }
+  };
+
   function printAssistantText(text) {
     const s = String(text ?? "").trimEnd();
     if (!s) return;
@@ -328,9 +387,19 @@ async function main() {
     const tools = getToolSchemas();
 
     for (let iter = 0; iter < 25; iter += 1) {
+      const reminder = formatPlanReminderForModel(chatState.plan);
+      const messagesForModel = (() => {
+        const msgs = chatState.messages.slice();
+        const idx = msgs.findIndex((m) => m?.role === "system" && typeof m?.content === "string");
+        if (idx === -1) return [...msgs, { role: "system", content: reminder }];
+        const sys = msgs[idx];
+        msgs[idx] = { ...sys, content: `${sys.content}\n\n${reminder}` };
+        return msgs;
+      })();
+
       const resp = await client.chat.completions.create({
         model,
-        messages: chatState.messages,
+        messages: messagesForModel,
         tools,
         tool_choice: "auto"
       });
@@ -390,7 +459,7 @@ async function main() {
           continue;
         }
 
-        const handler = toolHandlers[toolName];
+        const handler = toolHandlers[toolName] || planHandlers[toolName];
         const argsSummary = formatToolArgs(toolName, argsObj);
         console.log(`${roleTool} ${styles.cyan("→")} ${styles.cyan(toolName)} ${styles.dim(argsSummary)}`.trimEnd());
 
@@ -418,6 +487,10 @@ async function main() {
           if (persistAfter?.ts && persistAfter.ts !== persistBefore) {
             console.log(indentLines(styles.dim(`saved zip: ${persistAfter.bytes} bytes`), "  "));
           }
+        }
+
+        if (toolName === "plan_update" && isOk) {
+          printPlan({ header: "-- plan updated --" });
         }
 
         chatState.messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(out) });
@@ -458,6 +531,11 @@ async function main() {
         } catch (err) {
           console.log(styles.red(`history failed: ${String(err?.message || err)}`));
         }
+        continue;
+      }
+
+      if (cmd === "plan") {
+        printPlan();
         continue;
       }
 
