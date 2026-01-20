@@ -74,6 +74,8 @@ The `sandbox_runner` returns the updated workspace as a new ZIP.
 
 ## TUI (Ollama + gpt-oss:20b)
 
+The TUI uses the OpenAI-compatible **Responses API** (`/v1/responses`). For Ollama this requires a recent version that supports it.
+
 1) Make sure Ollama is running and has the model:
 
 ```bash
@@ -95,6 +97,12 @@ npm run tui -- --zip ./workspace.zip --verbose-tools
 NO_COLOR=1 npm run tui -- --zip ./workspace.zip
 ```
 
+Enable provider web search (if supported):
+
+```bash
+npm run tui -- --zip ./workspace.zip --web
+```
+
 This will also create/update a chat log next to the ZIP (default: `./workspace.zip.chat.json`) and will
 **resume it** on the next run. Use `--chat <newfile>` (or delete the chat log) to start fresh.
 
@@ -106,6 +114,14 @@ The agent has a chat-scoped TODO plan (stored in the chat log JSON, not in the w
 
 - Tools: `plan_read`, `plan_update`
 - TUI: `:plan` to show it
+
+### Provider web search (optional)
+
+If enabled with `--web`, the model may use a provider-native search tool:
+
+- OpenAI: `web_search`
+- Groq (GPT‑OSS models): `browser_search`
+- Ollama: not supported (flag is ignored)
 
 ## Time machine (history / undo / redo)
 

@@ -14,6 +14,7 @@ Note: the system prompt + tool schemas shown to the model call it a “workspace
 - Smoke test (no LLM): `npm run demo`
 - Chat TUI (Ollama): `npm run tui -- --zip ./workspace.zip`
   - Verbose tool logs: `--verbose-tools`
+  - Enable provider web search (if supported): `--web`
   - Disable ANSI colors: `NO_COLOR=1 ...`
 
 ## Architecture map
@@ -29,7 +30,7 @@ Note: the system prompt + tool schemas shown to the model call it a “workspace
   - `src/sandbox_runner.js`: stdin JSON → bundle → VM run → stdout JSON (updated ZIP)
 - Host integration:
   - `src/host_session.js`: spawns `sandbox_runner`, persists ZIP after mutating tool calls
-  - `src/tui.js`: simple REPL that uses Ollama’s OpenAI-compatible endpoint + tool-calling
+  - `src/tui.js`: simple REPL that uses an OpenAI-compatible **Responses API** endpoint + tool-calling
   - `src/chat_store.js`: chat persistence (outside the ZIP)
   - `src/plan.js`: chat-scoped TODO plan helpers (`plan_read`, `plan_update`)
   - `src/persist.js`: atomic file writes for ZIP/chat logs
@@ -55,5 +56,5 @@ Note: the system prompt + tool schemas shown to the model call it a “workspace
 - The TUI **resumes** the default chat log (`<zip>.chat.json`) if it exists; the model may skip re-reading files.
   - Start fresh with `--chat new.chat.json` or delete the log file.
 - If the assistant “claims” it read/wrote something but you didn’t see tool logs, it likely didn’t actually call tools.
-  - The chat log is the source of truth; grep for `tool_calls` / `role: "tool"`.
+  - The chat log is the source of truth; grep for `\"type\": \"function_call\"` / `\"type\": \"function_call_output\"`.
 - Trailing slashes are common in model output; `normPath()` strips them (except `/`) so `~/out/` and `~/out` behave the same.
