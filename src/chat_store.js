@@ -17,7 +17,7 @@ export async function loadChatState(chatPath) {
   const raw = await fs.readFile(chatPath, "utf8");
   const parsed = JSON.parse(raw);
   if (!parsed || typeof parsed !== "object") return null;
-  if (!Array.isArray(parsed.messages)) return null;
+  if (!Array.isArray(parsed.input) && !Array.isArray(parsed.messages)) return null;
   return parsed;
 }
 
@@ -31,4 +31,3 @@ export async function saveChatState(chatPath, state) {
   await atomicWriteFile(chatPath, json);
   return { ok: true, bytes: Buffer.byteLength(json, "utf8") };
 }
-

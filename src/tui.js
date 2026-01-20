@@ -25,6 +25,10 @@ function parseArgs(argv) {
       out["verbose-tools"] = true;
       continue;
     }
+    if (a === "--web") {
+      out.web = true;
+      continue;
+    }
     if (a === "--help" || a === "-h") {
       out.help = true;
       continue;
@@ -34,203 +38,152 @@ function parseArgs(argv) {
   return out;
 }
 
-function getToolSchemas() {
-  return [
-    {
-      type: "function",
-      function: {
-        name: "plan_read",
-        description: "Read the current TODO plan for this chat.",
-        parameters: { type: "object", properties: {}, additionalProperties: false }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "plan_update",
-        description: "Replace the TODO plan for this chat (at most one item can be in_progress).",
-        parameters: {
-          type: "object",
-          properties: {
-            items: {
-              type: "array",
-              description: "Ordered TODO items.",
-              items: {
-                type: "object",
-                properties: {
-                  step: { type: "string" },
-                  status: { type: "string", enum: ["pending", "in_progress", "completed", "canceled"] }
-                },
-                required: ["step", "status"],
-                additionalProperties: false
-              }
-            }
-          },
-          required: ["items"],
-          additionalProperties: false
+function detectProvider(baseURL) {
+  try {
+    const url = new URL(baseURL);
+    if (url.hostname === "api.groq.com") return "groq";
+    if (url.hostname === "api.openai.com") return "openai";
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return "ollama";
+  } catch {
+    // ignore
+  }
+  return "unknown";
+}
+
+function getToolSchemas({ enableWeb = false, provider = "unknown" } = {}) {
+  const fn = (name, description, parameters) => ({
+    type: "function",
+    name,
+    description,
+    parameters,
+    strict: true
+  });
+
+  const tools = [
+    fn("plan_read", "Read the current TODO plan for this chat.", { type: "object", properties: {}, additionalProperties: false }),
+    fn("plan_update", "Replace the TODO plan for this chat (at most one item can be in_progress).", {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          description: "Ordered TODO items.",
+          items: {
+            type: "object",
+            properties: {
+              step: { type: "string" },
+              status: { type: "string", enum: ["pending", "in_progress", "completed", "canceled"] }
+            },
+            required: ["step", "status"],
+            additionalProperties: false
+          }
         }
+      },
+      required: ["items"],
+      additionalProperties: false
+    }),
+    fn("fs_read", "Read a file from the workspace.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" }
+      },
+      required: ["path"],
+      additionalProperties: false
+    }),
+    fn("fs_read_lines", "Read a range of lines (1-based) from a UTF-8 text file in the workspace.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" },
+        startLine: { type: "number", description: "1-based start line (inclusive)." },
+        endLine: { type: "number", description: "1-based end line (inclusive)." }
+      },
+      required: ["path"],
+      additionalProperties: false
+    }),
+    fn(
+      "fs_search",
+      "Search for a literal substring across text files in the workspace and return small, patch-friendly line contexts.",
+      {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Literal substring to search for." },
+          path: { type: "string", description: "Search scope (directory or file path), rooted at ~/." }
+        },
+        required: ["query"],
+        additionalProperties: false
       }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_read",
-        description: "Read a file from the workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" }
-          },
-          required: ["path"],
-          additionalProperties: false
-        }
+    ),
+    fn("fs_write", "Write a file in the workspace.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" },
+        content: { type: "string", description: "UTF-8 text content." }
+      },
+      required: ["path", "content"],
+      additionalProperties: false
+    }),
+    fn("fs_patch_lines", "Replace a range of lines (1-based, inclusive) in a UTF-8 text file.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" },
+        startLine: { type: "number" },
+        endLine: { type: "number" },
+        replacement: { type: "string" }
+      },
+      required: ["path", "startLine", "endLine", "replacement"],
+      additionalProperties: false
+    }),
+    fn("fs_list", "List directory entries in the workspace.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" }
+      },
+      additionalProperties: false
+    }),
+    fn("fs_stat", "Stat a file or directory in the workspace.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" }
+      },
+      required: ["path"],
+      additionalProperties: false
+    }),
+    fn("fs_mkdir", "Create a directory in the workspace.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" }
+      },
+      required: ["path"],
+      additionalProperties: false
+    }),
+    fn("fs_delete", "Delete a file or empty directory in the workspace.", {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "POSIX path rooted at ~/" }
+      },
+      required: ["path"],
+      additionalProperties: false
+    }),
+    fn(
+      "js_exec",
+      "Execute a JS/TS entry file inside the workspace. The runtime has a virtual fs and does not load host Node modules.",
+      {
+        type: "object",
+        properties: {
+          entryPath: { type: "string", description: "POSIX path rooted at ~/" },
+          argv: { type: "array", items: { type: "string" } }
+        },
+        required: ["entryPath"],
+        additionalProperties: false
       }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_read_lines",
-        description: "Read a range of lines (1-based) from a UTF-8 text file in the workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" },
-            startLine: { type: "number", description: "1-based start line (inclusive)." },
-            endLine: { type: "number", description: "1-based end line (inclusive)." }
-          },
-          required: ["path"],
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_search",
-        description:
-          "Search for a literal substring across text files in the workspace and return small, patch-friendly line contexts.",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Literal substring to search for." },
-            path: { type: "string", description: "Search scope (directory or file path), rooted at ~/." }
-          },
-          required: ["query"],
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_write",
-        description: "Write a file in the workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" },
-            content: { type: "string", description: "UTF-8 text content." }
-          },
-          required: ["path", "content"],
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_patch_lines",
-        description: "Replace a range of lines (1-based, inclusive) in a UTF-8 text file.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" },
-            startLine: { type: "number" },
-            endLine: { type: "number" },
-            replacement: { type: "string" }
-          },
-          required: ["path", "startLine", "endLine", "replacement"],
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_list",
-        description: "List directory entries in the workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" }
-          },
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_stat",
-        description: "Stat a file or directory in the workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" }
-          },
-          required: ["path"],
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_mkdir",
-        description: "Create a directory in the workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" }
-          },
-          required: ["path"],
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "fs_delete",
-        description: "Delete a file or empty directory in the workspace.",
-        parameters: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "POSIX path rooted at ~/" }
-          },
-          required: ["path"],
-          additionalProperties: false
-        }
-      }
-    },
-    {
-      type: "function",
-      function: {
-        name: "js_exec",
-        description:
-          "Execute a JS/TS entry file inside the workspace. The runtime has a virtual fs and does not load host Node modules.",
-        parameters: {
-          type: "object",
-          properties: {
-            entryPath: { type: "string", description: "POSIX path rooted at ~/" },
-            argv: { type: "array", items: { type: "string" } }
-          },
-          required: ["entryPath"],
-          additionalProperties: false
-        }
-      }
-    }
+    )
   ];
+
+  if (enableWeb) {
+    if (provider === "openai") tools.unshift({ type: "web_search" });
+    else if (provider === "groq") tools.unshift({ type: "browser_search" });
+  }
+
+  return tools;
 }
 
 function makeSystemPrompt() {
@@ -245,6 +198,7 @@ function makeSystemPrompt() {
     "- Prefer `fs_read_lines` + `fs_patch_lines` for edits; avoid rewriting entire files.",
     "- Use `js_exec` to run code inside the workspace. It can only access the virtual filesystem.",
     "- Do not assume you can access the host machine, network, or any host Node.js built-in modules.",
+    "- If available, you may use a provider web search tool for external facts (use it sparingly).",
     "",
     "Notes:",
     "- `fs` and `fs/promises` are virtual shims inside the sandbox.",
@@ -256,7 +210,7 @@ function makeSystemPrompt() {
 function usage() {
   return [
     "Usage:",
-    "  npm run tui -- --zip <path/to/workspace.zip> [--chat <path/to/chat.json>] [--model <model>] [--base-url <url>] [--verbose-tools]",
+    "  npm run tui -- --zip <path/to/workspace.zip> [--chat <path/to/chat.json>] [--model <model>] [--base-url <url>] [--web] [--verbose-tools]",
     "",
     "Commands:",
     "  :plan               Show plan (per chat log)",
@@ -268,6 +222,7 @@ function usage() {
     "  :restore <id>       Restore workspace to a specific history entry",
     "",
     "Options:",
+    "  --web             Enable provider web search (if supported)",
     "  --verbose-tools   Print full tool JSON + autosave info",
     "",
     "Defaults:",
@@ -301,6 +256,8 @@ async function main() {
     "http://localhost:11434/v1";
   const apiKey = process.env.OPENAI_API_KEY || "ollama";
   const verboseTools = Boolean(args["verbose-tools"]);
+  const enableWeb = Boolean(args.web);
+  const provider = detectProvider(baseURL);
 
   const client = new OpenAI({ apiKey, baseURL });
   const styles = makeStyles();
@@ -313,37 +270,39 @@ async function main() {
   }
   const { handlers: toolHandlers, getLastPersist, time } = createHostToolHandlers({ workspace, zipPath });
 
-  const systemPrompt = makeSystemPrompt();
+  const instructionsBase = makeSystemPrompt();
   const loadedChatState = await loadChatState(chatPath);
-  const resumed = Boolean(loadedChatState);
   let chatState = loadedChatState;
-  if (!chatState) {
+  const resumed = Boolean(chatState && Array.isArray(chatState.input));
+  if (!resumed) {
     chatState = {
-      version: 1,
+      version: 2,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       zipPath,
       model,
       baseURL,
-      messages: [{ role: "system", content: systemPrompt }]
+      instructions: instructionsBase,
+      input: []
     };
-    await saveChatState(chatPath, chatState);
   } else {
     chatState.zipPath = zipPath;
     chatState.model = model;
     chatState.baseURL = baseURL;
-    if (!chatState.messages.some((m) => m?.role === "system")) {
-      chatState.messages.unshift({ role: "system", content: systemPrompt });
-    }
-    await saveChatState(chatPath, chatState);
+    chatState.instructions = instructionsBase;
+    if (!Array.isArray(chatState.input)) chatState.input = [];
   }
+  await saveChatState(chatPath, chatState);
 
   console.log(`Workspace ZIP: ${zipPath}`);
   console.log(`Chat log:      ${chatPath}`);
-  console.log(`Chat session:  ${resumed ? "resumed" : "new"} (${chatState.messages.length} messages)`);
+  console.log(`Chat session:  ${resumed ? "resumed" : "new"} (${chatState.input.length} items)`);
   if (resumed) console.log(styles.dim("Tip: pass --chat <newfile> (or delete the chat log) to start fresh."));
   console.log(`Model:         ${model}`);
+  console.log(`Provider:      ${provider}`);
   console.log(`Base URL:      ${baseURL}`);
+  const webTool = enableWeb ? (provider === "openai" ? "web_search" : provider === "groq" ? "browser_search" : null) : null;
+  console.log(`Web search:    ${enableWeb ? "on" : "off"}${webTool ? ` (${webTool})` : enableWeb ? " (unsupported)" : ""}`);
   console.log(`Colors:        ${styles.enabled ? "on" : "off"}${process.env.NO_COLOR ? " (NO_COLOR)" : ""}`);
   console.log(`Verbose tools: ${verboseTools ? "on" : "off"}`);
   console.log("");
@@ -384,63 +343,59 @@ async function main() {
   }
 
   async function runToolLoop() {
-    const tools = getToolSchemas();
+    const tools = getToolSchemas({ enableWeb, provider });
 
     for (let iter = 0; iter < 25; iter += 1) {
       const reminder = formatPlanReminderForModel(chatState.plan);
-      const messagesForModel = (() => {
-        const msgs = chatState.messages.slice();
-        const idx = msgs.findIndex((m) => m?.role === "system" && typeof m?.content === "string");
-        if (idx === -1) return [...msgs, { role: "system", content: reminder }];
-        const sys = msgs[idx];
-        msgs[idx] = { ...sys, content: `${sys.content}\n\n${reminder}` };
-        return msgs;
-      })();
+      const instructions = `${String(chatState?.instructions || instructionsBase)}\n\n${reminder}`.trim();
 
-      const resp = await client.chat.completions.create({
-        model,
-        messages: messagesForModel,
-        tools,
-        tool_choice: "auto"
-      });
-
-      const msg = resp?.choices?.[0]?.message;
-      if (!msg) {
-        console.error("No assistant message returned.");
+      let resp = null;
+      try {
+        resp = await client.responses.create({
+          model,
+          instructions,
+          input: chatState.input,
+          tools,
+          tool_choice: "auto"
+        });
+      } catch (err) {
+        console.error(`Responses API error: ${String(err?.message || err)}`);
         return;
       }
 
-      chatState.messages.push({
-        role: "assistant",
-        content: msg.content ?? "",
-        tool_calls: msg.tool_calls
-      });
+      const outputItems = Array.isArray(resp?.output) ? resp.output : [];
+      chatState.input.push(...outputItems);
       await saveChatState(chatPath, chatState);
 
-      const toolCalls = msg.tool_calls || [];
-      if (toolCalls.length === 0) {
-        printAssistantText(msg.content);
-        return;
+      const assistantText = String(resp?.output_text ?? "").trimEnd();
+      printAssistantText(assistantText);
+
+      const providerCalls = outputItems.filter(
+        (it) => typeof it?.type === "string" && it.type !== "function_call" && it.type.endsWith("_call")
+      );
+      if (providerCalls.length > 0) {
+        const shown = providerCalls
+          .map((c) => String(c.type))
+          .slice(0, 5)
+          .join(", ");
+        const suffix = providerCalls.length > 5 ? " …" : "";
+        console.log(styles.yellow(`-- provider tools: ${shown}${suffix} --`));
       }
 
-      printAssistantText(msg.content);
-      console.log(styles.yellow(`-- tool round ${iter + 1}: ${toolCalls.length} call(s) --`));
+      const functionCalls = outputItems.filter((it) => it?.type === "function_call");
+      if (functionCalls.length === 0) return;
 
-      for (const tc of toolCalls) {
-        const toolName = tc?.function?.name;
-        const rawArgs = tc?.function?.arguments ?? "{}";
+      console.log(styles.yellow(`-- tool round ${iter + 1}: ${functionCalls.length} call(s) --`));
+
+      for (const tc of functionCalls) {
+        const toolName = tc?.name;
+        const callId = tc?.call_id;
+        const rawArgs = tc?.arguments ?? "{}";
         let argsObj = {};
 
-        if (!toolName || !tc?.id) {
-          const out = { ok: false, error: "Malformed tool call", toolCall: tc };
-          chatState.messages.push({
-            role: "tool",
-            tool_call_id: tc?.id ?? "missing_id",
-            content: JSON.stringify(out)
-          });
-          await saveChatState(chatPath, chatState);
-          console.log(`${roleTool} ${styles.red("✗")} ${styles.cyan("malformed tool call")}`);
-          if (verboseTools) console.log(indentLines(styles.dim(JSON.stringify(out, null, 2)), "  "));
+        if (!toolName || !callId) {
+          console.log(`${roleTool} ${styles.red("✗")} ${styles.cyan("malformed function_call")}`);
+          if (verboseTools) console.log(indentLines(styles.dim(JSON.stringify(tc, null, 2)), "  "));
           continue;
         }
 
@@ -452,10 +407,10 @@ async function main() {
             error: `Invalid JSON arguments for ${toolName}: ${String(err?.message || err)}`,
             rawArguments: rawArgs
           };
-          chatState.messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(out) });
-          await saveChatState(chatPath, chatState);
           console.log(`${roleTool} ${styles.red("✗")} ${styles.cyan(toolName)} ${styles.red("invalid JSON arguments")}`);
           if (verboseTools) console.log(indentLines(styles.dim(JSON.stringify(out, null, 2)), "  "));
+          chatState.input.push({ type: "function_call_output", call_id: callId, output: JSON.stringify(out) });
+          await saveChatState(chatPath, chatState);
           continue;
         }
 
@@ -493,7 +448,7 @@ async function main() {
           printPlan({ header: "-- plan updated --" });
         }
 
-        chatState.messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(out) });
+        chatState.input.push({ type: "function_call_output", call_id: callId, output: JSON.stringify(out) });
         await saveChatState(chatPath, chatState);
       }
     }
@@ -574,7 +529,7 @@ async function main() {
           const res = await action({ steps });
           console.log(styles.yellow(`-- ${cmd} --`));
           console.log(styles.dim(JSON.stringify(res)));
-          chatState.messages.push({
+          chatState.input.push({
             role: "system",
             content: `Workspace changed by host command :${cmd} (${Number.isFinite(steps) ? steps : 1} step(s)) at ${new Date().toISOString()}. Re-check files before proceeding.`
           });
@@ -598,7 +553,7 @@ async function main() {
           }
           console.log(styles.yellow(`-- restore --`));
           console.log(styles.dim(JSON.stringify(res)));
-          chatState.messages.push({
+          chatState.input.push({
             role: "system",
             content: `Workspace changed by host command :restore (${arg1}) at ${new Date().toISOString()}. Re-check files before proceeding.`
           });
@@ -613,7 +568,7 @@ async function main() {
       continue;
     }
 
-    chatState.messages.push({ role: "user", content: line });
+    chatState.input.push({ role: "user", content: line });
     await saveChatState(chatPath, chatState);
 
     try {
